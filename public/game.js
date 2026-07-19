@@ -41,8 +41,8 @@ const LEVELS = [
     ["glass_beam",980,582],["wood_post",940,524],["wood_post",1020,524],["glass_beam",980,466],["pig",980,553],
     ["glass_beam",900,450],["pig",900,421]]},
   {name:"石牙堡",tag:"重甲核心",birds:["yellow","bomb","red","red","blue"],par:95,items:[
-    ["stone_post",820,542.5],["stone_post",980,542.5],["stone_beam",900,483],["pig",900,569],
-    ["wood_post",850,421],["wood_post",950,421],["stone_beam",900,359],["pig",900,450],["pig",900,326]]},
+    ["stone_post",850,542.5],["stone_post",950,542.5],["stone_beam",900,483],["pig",900,569],
+    ["wood_post",870,421],["wood_post",930,421],["stone_beam",900,359],["pig",900,450],["pig",900,326]]},
   {name:"王冠工事",tag:"混合要塞",birds:["red","blue","yellow","bomb","red"],par:110,items:[
     ["stone_post",780,542.5],["stone_post",870,542.5],["stone_beam",825,483],["pig",825,569],
     ["stone_post",960,542.5],["stone_post",1050,542.5],["stone_beam",1005,483],["pig",1005,569],
@@ -52,7 +52,7 @@ const LEVELS = [
 const game = {
   mode:null, level:0, phase:"menu", role:null, room:null, serverState:null, birds:fallbackBirds, itemSpecs:fallbackItems,
   queue:[], entities:[], projectiles:[], selectedKind:null, dragging:null, aiming:false, aim:{x:SLING.x,y:SLING.y}, pointer:{x:0,y:0,inside:false},
-  score:0, startedAt:0, shotAt:0, shotSleeping:0, lastFrame:performance.now(), simSent:0, abilityUsed:false, sound:true,
+  score:0, startedAt:0, shotAt:0, shotSleeping:0, lastFrame:performance.now(), simSent:0, hudAt:0, abilityUsed:false, sound:true,
   shake:0, impactFlash:0,
   stars:JSON.parse(localStorage.getItem("flock-stars") || "{}")
 };
@@ -166,15 +166,16 @@ function renderShop(){
   $("#canvasHint").textContent=game.serverState.phase==="fortify"?(birdSide?"购买小鸟并确认准备":"从左侧购买，点击虚线区放置；拖拽调整"):(birdSide?"拖动弹弓上的小鸟，松开发射":"观察来袭小鸟与堡垒状态");
 }
 
-function updateHud(){
-  if(game.mode==="single"){$("#birdScore").textContent=Math.round(game.score);$("#pigScore").textContent=livingPigs();}
+function updateHud(force=true){
+  const now=performance.now();if(!force&&now-game.hudAt<100)return;game.hudAt=now;
+  if(game.mode==="single"){const score=String(Math.round(game.score)),pigs=String(livingPigs());if($("#birdScore").textContent!==score)$("#birdScore").textContent=score;if($("#pigScore").textContent!==pigs)$("#pigScore").textContent=pigs;}
   const current=game.projectiles.find(p=>p.primary&&!p.dead);$("#abilityPrompt").classList.toggle("hidden",!current||current.abilityUsed);
 }
 
-const simulation={engine:null,bodies:new Map(),ground:null,pending:new Set(),accumulator:0};
+const simulation={engine:null,bodies:new Map(),ground:null,pending:new Set(),accumulator:0,supportAudit:0};
 const particles=[];
 function isAuthority(){return game.mode==="single"||game.role==="bird";}
-function destroyPhysics(){if(simulation.engine)Composite.clear(simulation.engine.world,false,true);simulation.engine=null;simulation.bodies.clear();simulation.ground=null;simulation.pending.clear();simulation.accumulator=0;}
+function destroyPhysics(){if(simulation.engine)Composite.clear(simulation.engine.world,false,true);simulation.engine=null;simulation.bodies.clear();simulation.ground=null;simulation.pending.clear();simulation.accumulator=0;simulation.supportAudit=0;}
 function bodyOptions(entity){
   const material={wood:{density:.0017,friction:.72,frictionStatic:1,restitution:.08},stone:{density:.0045,friction:.86,frictionStatic:1.2,restitution:.025},glass:{density:.0011,friction:.42,frictionStatic:.65,restitution:.16},pig:{density:.002,friction:.68,frictionStatic:.9,restitution:.22}}[entity.material];
   return {...material,frictionAir:.006,sleepThreshold:45,label:`entity:${entity.id}`,chamfer:entity.kind==="pig"?undefined:{radius:Math.min(3,entity.h/5)}};
@@ -207,6 +208,20 @@ function damageEntity(entity,amount,body,direct){
 }
 function wakeDynamicBodies(){
   for(const body of simulation.bodies.values())if(!body.isStatic)Sleeping.set(body,false);
+}
+function wakeUnsupportedBodies(dt){
+  simulation.supportAudit+=dt;if(simulation.supportAudit<.2)return;simulation.supportAudit=0;
+  const bodies=[...simulation.bodies.values()];
+  for(const body of bodies){
+    if(!body.isSleeping||body.isStatic||body.bounds.max.y>=GROUND-2)continue;
+    const bottom=body.bounds.max.y,minOverlap=Math.min(12,(body.bounds.max.x-body.bounds.min.x)*.25);
+    const supported=bodies.some(base=>{
+      if(base===body||base.gameEntity?.hp<=0)return false;const gap=base.bounds.min.y-bottom;
+      const overlap=Math.min(body.bounds.max.x,base.bounds.max.x)-Math.max(body.bounds.min.x,base.bounds.min.x);
+      return gap>=-5&&gap<=12&&overlap>=minOverlap;
+    });
+    if(!supported)Sleeping.set(body,false);
+  }
 }
 function makeProjectile(type,x,y,vx,vy,primary=true,id="bird",r=type==="bomb"?22:18){
   const projectile={id,type,x,y,vx,vy,angle:Math.atan2(vy,vx),r,primary,abilityUsed:false,dead:false,age:0,body:null};
@@ -244,12 +259,17 @@ function physics(dt){
     for(const [id,body] of simulation.bodies){const entity=body.gameEntity;if(!entity||entity.hp<=0)continue;entity.x=body.position.x;entity.y=body.position.y;entity.angle=body.angle;entity.vx=body.velocity.x*60;entity.vy=body.velocity.y*60;if(entity.x<-140||entity.x>1340||entity.y>760){entity.hp=0;simulation.pending.add(body);}}
     for(const projectile of game.projectiles){if(projectile.body){projectile.x=projectile.body.position.x;projectile.y=projectile.body.position.y;projectile.vx=projectile.body.velocity.x*60;projectile.vy=projectile.body.velocity.y*60;projectile.angle=projectile.body.angle;projectile.age+=dt;}if(projectile.x>1350||projectile.x<-150||projectile.y>760||projectile.age>20){projectile.dead=true;if(projectile.body)simulation.pending.add(projectile.body);}}
     let removedStructure=false;for(const body of simulation.pending){Composite.remove(simulation.engine.world,body);if(body.gameType==="entity"){simulation.bodies.delete(body.gameEntity.id);removedStructure=true;}if(body.gameType==="bird"&&body.projectile)body.projectile.body=null;}simulation.pending.clear();if(removedStructure)wakeDynamicBodies();
+    wakeUnsupportedBodies(dt);
     const activeProjectile=game.projectiles.some(p=>!p.dead&&(p.body?(!p.body.isSleeping&&p.body.speed>.28):Math.hypot(p.vx,p.vy)>18)&&p.age<20),activeStructure=[...simulation.bodies.values()].some(body=>!body.isSleeping&&body.speed>.24);const active=activeProjectile||activeStructure;
     if(game.projectiles.length){game.shotSleeping=active?0:game.shotSleeping+dt;if(game.shotSleeping>1.15||performance.now()-game.shotAt>20000)endShot();}
-    if(game.mode==="multi"&&game.role==="bird"&&game.projectiles.length&&performance.now()-game.simSent>125){game.simSent=performance.now();const bird=game.projectiles[0];send({type:"sim",entities:game.entities.map(entity=>({id:entity.id,x:entity.x,y:entity.y,vx:entity.vx,vy:entity.vy,angle:entity.angle,hp:entity.hp})),bird:bird?{x:bird.x,y:bird.y,angle:Math.atan2(Math.sin(bird.angle),Math.cos(bird.angle))}:null});}
+    if(game.mode==="multi"&&game.role==="bird"&&game.projectiles.length&&performance.now()-game.simSent>66){game.simSent=performance.now();const bird=game.projectiles[0];send({type:"sim",entities:game.entities.map(entity=>({id:entity.id,x:entity.x,y:entity.y,vx:entity.vx,vy:entity.vy,angle:entity.angle,hp:entity.hp})),bird:bird?{x:bird.x,y:bird.y,angle:Math.atan2(Math.sin(bird.angle),Math.cos(bird.angle))}:null});}
+  }else if(game.phase==="battle"&&!authority){
+    const blend=1-Math.exp(-20*dt);
+    for(const entity of game.entities)if(Number.isFinite(entity.netX)){entity.x+=(entity.netX-entity.x)*blend;entity.y+=(entity.netY-entity.y)*blend;const delta=Math.atan2(Math.sin(entity.netAngle-entity.angle),Math.cos(entity.netAngle-entity.angle));entity.angle+=delta*blend;}
+    for(const projectile of game.projectiles)if(Number.isFinite(projectile.netX)){projectile.x+=(projectile.netX-projectile.x)*blend;projectile.y+=(projectile.netY-projectile.y)*blend;const delta=Math.atan2(Math.sin(projectile.netAngle-projectile.angle),Math.cos(projectile.netAngle-projectile.angle));projectile.angle+=delta*blend;}
   }
   for(const particle of particles){particle.vy+=330*dt;particle.x+=particle.vx*dt;particle.y+=particle.vy*dt;particle.angle+=particle.spin*dt;particle.life-=dt;}
-  for(let i=particles.length-1;i>=0;i--)if(particles[i].life<=0)particles.splice(i,1);game.shake=Math.max(0,game.shake-28*dt);game.impactFlash=Math.max(0,game.impactFlash-3.5*dt);updateHud();
+  for(let i=particles.length-1;i>=0;i--)if(particles[i].life<=0)particles.splice(i,1);game.shake=Math.max(0,game.shake-28*dt);game.impactFlash=Math.max(0,game.impactFlash-3.5*dt);updateHud(false);
 }
 function endShot(){
   if(!game.projectiles.length)return;for(const projectile of game.projectiles)if(projectile.body&&simulation.engine)Composite.remove(simulation.engine.world,projectile.body);game.projectiles=[];game.shotSleeping=0;
@@ -260,8 +280,8 @@ function endShot(){
 }
 function sendShotEnd(){send({type:"shot_end",entities:game.entities.map(e=>({id:e.id,x:e.x,y:e.y,angle:e.angle||0,hp:e.hp}))});}
 function applyRemoteSim(message){
-  const map=new Map(game.entities.map(e=>[e.id,e]));for(const remote of message.entities||[]){const e=map.get(remote.id);if(e)Object.assign(e,remote);}
-  if(message.bird&&game.projectiles[0]){game.projectiles[0].x=message.bird.x;game.projectiles[0].y=message.bird.y;if(Number.isFinite(message.bird.angle))game.projectiles[0].angle=message.bird.angle;}
+  const map=new Map(game.entities.map(e=>[e.id,e]));for(const remote of message.entities||[]){const e=map.get(remote.id);if(e){e.netX=remote.x;e.netY=remote.y;e.netAngle=Number.isFinite(remote.angle)?remote.angle:e.angle;e.vx=remote.vx;e.vy=remote.vy;e.hp=remote.hp;}}
+  if(message.bird&&game.projectiles[0]){const bird=game.projectiles[0];bird.netX=message.bird.x;bird.netY=message.bird.y;bird.netAngle=Number.isFinite(message.bird.angle)?message.bird.angle:bird.angle;}
 }
 
 function canvasPoint(event){const rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*W/rect.width,y:(event.clientY-rect.top)*H/rect.height};}

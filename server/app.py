@@ -26,11 +26,11 @@ STARTED_AT = time.monotonic()
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC = ROOT / "public"
 
-MAX_CONNECTIONS = 80
-MAX_ROOMS = 32
+MAX_CONNECTIONS = 40
+MAX_ROOMS = 10
 MAX_MESSAGE = 16 * 1024
 MAX_QUEUE_BYTES = 128 * 1024
-MAX_MESSAGES_PER_10S = 100
+MAX_MESSAGES_PER_10S = 220
 IDLE_TIMEOUT = 70
 ROOM_TTL = 180
 WORLD = {"width": 1200, "height": 675, "ground": 590, "buildMinX": 700, "buildMaxX": 1165}

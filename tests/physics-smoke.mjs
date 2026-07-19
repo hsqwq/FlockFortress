@@ -32,6 +32,24 @@ for(let index=0;index<bodies.length;index++){
   }
 }
 
+const levelThreeEngine=Engine.create({enableSleeping:true});
+levelThreeEngine.gravity.y=1;levelThreeEngine.gravity.scale=.00072;
+Composite.add(levelThreeEngine.world,Bodies.rectangle(600,628,1700,76,{isStatic:true,friction:.92,restitution:.03}));
+const levelThreeDefinitions=[
+  ["stone",850,542.5,26,95],["stone",950,542.5,26,95],["stone",900,483,105,24],["pig",900,569,42,42],
+  ["wood",870,421,22,100],["wood",930,421,22,100],["stone",900,359,105,24],["pig",900,450,42,42],["pig",900,326,42,42],
+];
+const levelThreeBodies=levelThreeDefinitions.map(([material,x,y,w,h])=>{
+  const options=material==="stone"?{density:.0045,friction:.86,frictionStatic:1.2,restitution:.025}:material==="pig"?{density:.002,friction:.68,frictionStatic:.9,restitution:.22}:{density:.0017,friction:.72,frictionStatic:1,restitution:.08};
+  return material==="pig"?Bodies.circle(x,y,w/2,options):Bodies.rectangle(x,y,w,h,{...options,chamfer:{radius:3}});
+});
+Composite.add(levelThreeEngine.world,levelThreeBodies);
+for(let frame=0;frame<360;frame++)Engine.update(levelThreeEngine,fixedStep);
+for(let index=0;index<levelThreeBodies.length;index++){
+  const body=levelThreeBodies[index],[,startX,startY]=levelThreeDefinitions[index];
+  if(Math.abs(body.position.x-startX)>12||Math.abs(body.position.y-startY)>18||body.speed>.35)throw new Error(`level three body ${index} unstable: ${JSON.stringify({position:body.position,speed:body.speed})}`);
+}
+
 // Removing any supporting entity must wake every sleeping dynamic body so no
 // pig, beam, or post can remain suspended after its support disappears.
 const support=Bodies.rectangle(1090,540,22,100,{density:.0017});

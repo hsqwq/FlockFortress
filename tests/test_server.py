@@ -70,6 +70,9 @@ class EconomyTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RoomLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    def test_server_room_budget_is_ten(self):
+        self.assertEqual(app.MAX_ROOMS, 10)
+
     async def test_last_departure_removes_room_immediately(self):
         room = app.Room("EMPTY1", object(), "bird")
         client = SimpleNamespace(room=room, role="bird", closed=True)
