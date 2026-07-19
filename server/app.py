@@ -71,7 +71,7 @@ def clean_name(value: Any) -> str:
 
 
 def public_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {key: item[key] for key in ("id", "kind", "x", "y", "w", "h", "hp", "maxHp", "material")}
+    return {key: item[key] for key in ("id", "kind", "x", "y", "w", "h", "hp", "maxHp", "material")} | {"angle": item.get("angle", 0)}
 
 
 def overlap(a: dict[str, Any], b: dict[str, Any], margin: float = 2) -> bool:
@@ -338,7 +338,7 @@ async def handle_message(client: Client, data: dict[str, Any]) -> None:
             item = {"id": secrets.token_hex(4), "kind": item_kind,
                     "x": snap(data.get("x", 900), WORLD["buildMinX"] + spec["w"] / 2, WORLD["buildMaxX"] - spec["w"] / 2),
                     "y": snap(data.get("y", 500), 80 + spec["h"] / 2, WORLD["ground"] - spec["h"] / 2),
-                    "w": spec["w"], "h": spec["h"], "hp": spec["hp"], "maxHp": spec["hp"], "material": spec["material"]}
+                    "w": spec["w"], "h": spec["h"], "hp": spec["hp"], "maxHp": spec["hp"], "material": spec["material"], "angle": 0}
             problem = validate_construction(room.items + [item])
             if problem:
                 return await client.error(problem)
@@ -409,12 +409,14 @@ async def handle_message(client: Client, data: dict[str, Any]) -> None:
                          "y": round(clamp(float(entity.get("y", 0)), -100, 800), 1),
                          "vx": round(clamp(float(entity.get("vx", 0)), -1500, 1500), 1),
                          "vy": round(clamp(float(entity.get("vy", 0)), -1500, 1500), 1),
+                         "angle": round(clamp(float(entity.get("angle", 0)), -3.2, 3.2), 3),
                          "hp": round(clamp(float(entity.get("hp", 0)), 0, 200), 1)})
         raw_bird = data.get("bird")
         safe_bird = None
         if isinstance(raw_bird, dict):
             safe_bird = {"x": round(clamp(float(raw_bird.get("x", 0)), -100, 1300), 1),
-                         "y": round(clamp(float(raw_bird.get("y", 0)), -100, 800), 1)}
+                         "y": round(clamp(float(raw_bird.get("y", 0)), -100, 800), 1),
+                         "angle": round(clamp(float(raw_bird.get("angle", 0)), -3.2, 3.2), 3)}
         await room.broadcast({"type": "sim", "entities": safe, "bird": safe_bird})
         return
     if kind == "shot_end":
@@ -433,6 +435,7 @@ async def handle_message(client: Client, data: dict[str, Any]) -> None:
             item["hp"] = round(new_hp, 1)
             item["x"] = round(clamp(float(update.get("x", item["x"])), -100, 1300), 1)
             item["y"] = round(clamp(float(update.get("y", item["y"])), -100, 800), 1)
+            item["angle"] = round(clamp(float(update.get("angle", item.get("angle", 0))), -3.2, 3.2), 3)
         current_pigs = sum(item["kind"] == "pig" and item["hp"] > 0 for item in room.items)
         killed = previous_pigs - current_pigs
         room.credits["bird"] = min(1200, room.credits["bird"] + destroyed_blocks * 8 + killed * 55)

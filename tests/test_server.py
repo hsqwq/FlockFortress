@@ -19,6 +19,9 @@ def make_item(kind, item_id, x, y):
 
 
 class ConstructionTests(unittest.TestCase):
+    def test_public_item_always_has_rotation(self):
+        self.assertEqual(app.public_item(make_item("pig", "pig", 870, 569))["angle"], 0)
+
     def test_snap_clamps_odd_sized_pig_to_ground(self):
         self.assertEqual(app.snap(569, 101, 569), 569)
 

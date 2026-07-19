@@ -6,9 +6,16 @@ const canvas = $("#gameCanvas");
 const ctx = canvas.getContext("2d");
 const W = 1200, H = 675, GROUND = 590, SLING = {x: 177, y: 475};
 const images = {};
-for (const [name, src] of Object.entries({background:"/assets/background.png", sling:"/assets/sling.png", red:"/assets/red-bird.png"})) {
+for (const [name, src] of Object.entries({
+  background:"/assets/background.png", sling:"/assets/sling.png",
+  red:"/assets/characters/bird-red.png", yellow:"/assets/characters/bird-yellow.png",
+  blue:"/assets/characters/bird-blue.png", bomb:"/assets/characters/bird-bomb.png",
+  pig:"/assets/characters/pig.png"
+})) {
   images[name] = new Image(); images[name].src = src;
 }
+if(!window.Matter)throw new Error("Matter.js failed to load");
+const {Engine,Bodies,Body,Composite,Events,Sleeping}=Matter;
 
 const fallbackBirds = {
   red:{name:"红羽",cost:70,ability:"冲击",power:1}, yellow:{name:"疾风",cost:105,ability:"加速",power:.84},
@@ -25,22 +32,23 @@ const LEVELS = [
     ["wood_post",850,540],["wood_post",950,540],["wood_beam",900,480],["pig",900,555],
     ["wood_post",850,420],["wood_post",950,420],["wood_beam",900,360],["pig",900,445]]},
   {name:"玻璃回廊",tag:"脆弱连锁",birds:["blue","red","yellow","blue"],par:80,items:[
-    ["glass_beam",800,570],["wood_post",760,510],["wood_post",840,510],["glass_beam",800,450],["pig",800,545],
-    ["glass_beam",1000,570],["wood_post",960,510],["wood_post",1040,510],["glass_beam",1000,450],["pig",1000,545],
-    ["glass_beam",900,430],["pig",900,397]]},
+    ["glass_beam",820,582],["wood_post",780,524],["wood_post",860,524],["glass_beam",820,466],["pig",820,553],
+    ["glass_beam",980,582],["wood_post",940,524],["wood_post",1020,524],["glass_beam",980,466],["pig",980,553],
+    ["glass_beam",900,450],["pig",900,421]]},
   {name:"石牙堡",tag:"重甲核心",birds:["yellow","bomb","red","red","blue"],par:95,items:[
-    ["stone_post",820,530],["stone_post",980,530],["stone_beam",900,470],["pig",900,555],
-    ["wood_post",850,410],["wood_post",950,410],["stone_beam",900,350],["pig",900,435],["pig",900,317]]},
+    ["stone_post",820,542.5],["stone_post",980,542.5],["stone_beam",900,483],["pig",900,569],
+    ["wood_post",850,421],["wood_post",950,421],["stone_beam",900,359],["pig",900,450],["pig",900,326]]},
   {name:"王冠工事",tag:"混合要塞",birds:["red","blue","yellow","bomb","red"],par:110,items:[
-    ["stone_post",760,530],["wood_post",850,540],["wood_beam",805,480],["pig",805,555],
-    ["stone_post",980,530],["wood_post",1070,540],["wood_beam",1025,480],["pig",1025,555],
-    ["stone_post",850,410],["stone_post",980,410],["stone_beam",915,350],["glass_beam",915,460],["pig",915,435],["pig",915,317]]}
+    ["stone_post",780,542.5],["stone_post",870,542.5],["stone_beam",825,483],["pig",825,569],
+    ["stone_post",960,542.5],["stone_post",1050,542.5],["stone_beam",1005,483],["pig",1005,569],
+    ["stone_post",870,423.5],["stone_post",960,423.5],["wood_beam",915,366],["glass_beam",915,463],["pig",915,434],["pig",915,335]]}
 ];
 
 const game = {
   mode:null, level:0, phase:"menu", role:null, room:null, serverState:null, birds:fallbackBirds, itemSpecs:fallbackItems,
-  queue:[], entities:[], projectiles:[], selectedKind:null, dragging:null, aiming:false, aim:{x:SLING.x,y:SLING.y},
+  queue:[], entities:[], projectiles:[], selectedKind:null, dragging:null, aiming:false, aim:{x:SLING.x,y:SLING.y}, pointer:{x:0,y:0,inside:false},
   score:0, startedAt:0, shotAt:0, shotSleeping:0, lastFrame:performance.now(), simSent:0, abilityUsed:false, sound:true,
+  shake:0, impactFlash:0,
   stars:JSON.parse(localStorage.getItem("flock-stars") || "{}")
 };
 
@@ -48,11 +56,12 @@ function showScreen(id){ $$(".screen").forEach(el=>el.classList.toggle("active",
 function toast(message){ const el=$("#toast"); el.textContent=message; el.classList.add("show"); clearTimeout(toast.timer); toast.timer=setTimeout(()=>el.classList.remove("show"),2200); }
 function escapeText(value){ return String(value).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch])); }
 function birdColor(type){ return {red:"#e94b35",yellow:"#efb62f",blue:"#5aaad1",bomb:"#252b30"}[type] || "#e94b35"; }
+function birdAsset(type){return `/assets/characters/bird-${type}.png`;}
 function materialColor(mat){ return {wood:"#b87534",stone:"#7e8b8d",glass:"#7bd6e5",pig:"#9acb42"}[mat] || "#aaa"; }
-function itemFromTuple(tuple,index){ const [kind,x,y]=tuple,spec=game.itemSpecs[kind]; return {id:`l${game.level}-${index}`,kind,x,y,w:spec.w,h:spec.h,hp:spec.hp,maxHp:spec.hp,material:spec.material,vx:0,vy:0}; }
+function itemFromTuple(tuple,index){ const [kind,x,y]=tuple,spec=game.itemSpecs[kind]; return {id:`l${game.level}-${index}`,kind,x,y,w:spec.w,h:spec.h,hp:spec.hp,maxHp:spec.hp,material:spec.material,angle:0,vx:0,vy:0}; }
 function syncEntities(items){
   const old=new Map(game.entities.map(e=>[e.id,e]));
-  game.entities=(items||[]).map(raw=>{ const prev=old.get(raw.id)||{}; return {...raw,vx:prev.vx||0,vy:prev.vy||0}; });
+  game.entities=(items||[]).map(raw=>{ const prev=old.get(raw.id);if(prev){Object.assign(prev,raw);prev.angle=raw.angle??prev.angle??0;return prev;}return {...raw,angle:raw.angle??0,vx:0,vy:0}; });
 }
 
 function renderLevels(){
@@ -62,7 +71,8 @@ function renderLevels(){
 
 function startSingle(index){
   game.mode="single"; game.level=index; game.phase="battle"; game.role="bird"; game.room=null; game.serverState=null;
-  game.queue=[...LEVELS[index].birds]; game.entities=LEVELS[index].items.map(itemFromTuple); game.projectiles=[]; game.score=0; game.startedAt=performance.now(); game.shotSleeping=0;
+  game.queue=[...LEVELS[index].birds]; game.entities=LEVELS[index].items.map(itemFromTuple); game.projectiles=[]; game.score=0; game.startedAt=performance.now(); game.shotAt=0; game.shotSleeping=0;
+  initPhysics();
   $("#gameModeLabel").textContent="单人远征"; $("#roomLabel").textContent=`堡垒 ${String(index+1).padStart(2,"0")}`;
   $("#leftTeam").textContent="得分"; $("#rightTeam").textContent="剩余猪"; $("#birdScore").textContent="0";
   $("#roundLabel").textContent=LEVELS[index].name; $("#shopPanel").classList.add("hidden"); $("#waitingCard").classList.add("hidden"); $("#roundOverlay").classList.add("hidden");
@@ -119,7 +129,10 @@ function applyServerState(state){
   game.serverState=state; game.phase=state.phase; game.queue=[...(state.birdQueue||[])]; syncEntities(state.items||[]);
   $("#birdScore").textContent=state.scores.bird;$("#pigScore").textContent=state.scores.pig;$("#roundLabel").textContent=`第 ${state.round} 回合 · 先胜 3 局`;$("#roomLabel").textContent=`房间 ${state.room}`;
   const waiting=state.phase==="waiting";$("#waitingCard").classList.toggle("hidden",!waiting);$("#phaseLabel").textContent={waiting:"等待玩家",fortify:"购买与筑城",battle:"交战中",round_end:"回合结束",match_end:"比赛结束"}[state.phase]||state.phase;
-  if(state.phase==="fortify"){$("#roundOverlay").classList.add("hidden");game.projectiles=[];if(previousPhase!=="fortify"||previousRound!==state.round)game.selectedKind=null;}
+  if(state.phase==="fortify"){$("#roundOverlay").classList.add("hidden");game.projectiles=[];destroyPhysics();if(previousPhase!=="fortify"||previousRound!==state.round)game.selectedKind=null;}
+  if(state.phase==="battle"&&(previousPhase!=="battle"||previousRound!==state.round)){game.shotAt=0;initPhysics();}
+  if(state.phase==="battle"&&!state.activeBird&&game.role==="pig")game.projectiles=[];
+  if(state.phase!=="battle"&&state.phase!=="fortify")game.projectiles=[];
   renderShop();updateHud();
 }
 
@@ -134,9 +147,9 @@ function renderShop(){
   const birdSide=game.role==="bird",locked=game.serverState.phase!=="fortify"||game.serverState.ready.includes(game.role);
   $("#shopEyebrow").textContent=birdSide?"小鸟补给":"堡垒工坊";$("#coinValue").textContent=game.serverState.credits[game.role];
   const source=birdSide?game.birds:game.itemSpecs;
-  $("#shopList").innerHTML=Object.entries(source).map(([key,spec])=>`<button class="shop-item" data-shop="${key}" ${locked||spec.cost>game.serverState.credits[game.role]?"disabled":""}><span class="shop-swatch" style="background:${birdSide?birdColor(key):materialColor(spec.material)}">${birdSide?spec.name[0]:spec.material==="pig"?"猪":"▰"}</span><span><strong>${escapeText(spec.name)}</strong><small>${birdSide?escapeText(spec.ability):`${spec.hp} 耐久 · ${spec.w}×${spec.h}`}</small></span><span class="shop-cost">${spec.cost} ◉</span></button>`).join("");
-  $$("[data-shop]").forEach(button=>button.addEventListener("click",()=>{if(birdSide)send({type:"buy_bird",bird:button.dataset.shop});else{game.selectedKind=button.dataset.shop;toast(`已选择${game.itemSpecs[game.selectedKind].name}，点击建造区放置`);}}));
-  $("#queuePanel").classList.toggle("hidden",!birdSide);$("#birdQueue").innerHTML=(game.serverState.birdQueue||[]).map((bird,i)=>`<button class="queue-bird" data-sell="${i}" style="background:${birdColor(bird)}" title="点击退回">${game.birds[bird].name[0]}</button>`).join("");
+  $("#shopList").innerHTML=Object.entries(source).map(([key,spec])=>`<button class="shop-item ${!birdSide&&game.selectedKind===key?"selected":""}" data-shop="${key}" ${locked||spec.cost>game.serverState.credits[game.role]?"disabled":""}><span class="shop-swatch" style="background-color:${birdSide?"#dce8e8":materialColor(spec.material)};${birdSide?`background-image:url('${birdAsset(key)}');background-size:contain;background-position:center;background-repeat:no-repeat`:""}">${birdSide?"":spec.material==="pig"?"猪":"▰"}</span><span><strong>${escapeText(spec.name)}</strong><small>${birdSide?escapeText(spec.ability):`${spec.hp} 耐久 · ${spec.w}×${spec.h}`}</small></span><span class="shop-cost">${spec.cost} ◉</span></button>`).join("");
+  $$("[data-shop]").forEach(button=>button.addEventListener("click",()=>{if(birdSide)send({type:"buy_bird",bird:button.dataset.shop});else{game.selectedKind=button.dataset.shop;renderShop();toast(`已选择${game.itemSpecs[game.selectedKind].name}，移动鼠标预览位置`);}}));
+  $("#queuePanel").classList.toggle("hidden",!birdSide);$("#birdQueue").innerHTML=(game.serverState.birdQueue||[]).map((bird,i)=>`<button class="queue-bird" data-sell="${i}" style="background-color:#dce8e8;background-image:url('${birdAsset(bird)}');background-size:contain;background-position:center;background-repeat:no-repeat" title="点击退回" aria-label="退回${game.birds[bird].name}"></button>`).join("");
   $$("[data-sell]").forEach(button=>button.addEventListener("click",()=>send({type:"sell_bird",index:+button.dataset.sell})));
   const ready=game.serverState.ready.includes(game.role);$("#readyBtn").textContent=ready?"取消准备":"确认准备";$("#readyBtn").disabled=game.serverState.phase!=="fortify";
   $("#validationHint").textContent=birdSide?"每回合 1–6 只；点击队列中的小鸟可全额退回。":"放置 1–3 只猪；拖动物品调整，右键删除并全额退款。";
@@ -148,119 +161,164 @@ function updateHud(){
   const current=game.projectiles.find(p=>p.primary&&!p.dead);$("#abilityPrompt").classList.toggle("hidden",!current||current.abilityUsed);
 }
 
+const simulation={engine:null,bodies:new Map(),ground:null,pending:new Set(),accumulator:0};
+const particles=[];
+function isAuthority(){return game.mode==="single"||game.role==="bird";}
+function destroyPhysics(){if(simulation.engine)Composite.clear(simulation.engine.world,false,true);simulation.engine=null;simulation.bodies.clear();simulation.ground=null;simulation.pending.clear();simulation.accumulator=0;}
+function bodyOptions(entity){
+  const material={wood:{density:.0017,friction:.72,frictionStatic:1,restitution:.08},stone:{density:.0045,friction:.86,frictionStatic:1.2,restitution:.025},glass:{density:.0011,friction:.42,frictionStatic:.65,restitution:.16},pig:{density:.002,friction:.68,frictionStatic:.9,restitution:.22}}[entity.material];
+  return {...material,frictionAir:.006,sleepThreshold:45,label:`entity:${entity.id}`,chamfer:entity.kind==="pig"?undefined:{radius:Math.min(3,entity.h/5)}};
+}
+function initPhysics(){
+  destroyPhysics();if(!isAuthority()||game.phase!=="battle")return;
+  const engine=Engine.create({enableSleeping:true});engine.gravity.y=1;engine.gravity.scale=.00072;simulation.engine=engine;
+  simulation.ground=Bodies.rectangle(W/2,GROUND+38,W+500,76,{isStatic:true,label:"ground",friction:.92,restitution:.03});Composite.add(engine.world,simulation.ground);
+  for(const entity of game.entities){
+    if(entity.hp<=0)continue;const options=bodyOptions(entity);const body=entity.kind==="pig"?Bodies.circle(entity.x,entity.y,entity.w/2,options):Bodies.rectangle(entity.x,entity.y,entity.w,entity.h,options);
+    Body.setAngle(body,entity.angle||0);body.gameEntity=entity;body.gameType="entity";simulation.bodies.set(entity.id,body);Composite.add(engine.world,body);
+  }
+  Events.on(engine,"collisionStart",event=>{for(const pair of event.pairs)resolveCollision(pair.bodyA,pair.bodyB);});
+}
+function resolveCollision(a,b){
+  if(!game.shotAt)return;
+  const av=a.velocity||{x:0,y:0},bv=b.velocity||{x:0,y:0},speed=Math.hypot(av.x-bv.x,av.y-bv.y)*60;
+  const bird=a.gameType==="bird"?a:b.gameType==="bird"?b:null,target=bird==a?b:bird==b?a:null;
+  if(bird&&target?.gameType==="entity"&&speed>85){
+    const entity=target.gameEntity,resistance={glass:.42,wood:.82,stone:1.62,pig:.58}[entity.material]||1,power=game.birds[bird.projectile.type]?.power||1;
+    damageEntity(entity,(speed-70)*.125*power/resistance,target,true);
+  }else if(speed>190){
+    for(const body of [a,b])if(body.gameType==="entity"){const entity=body.gameEntity,resistance={glass:.48,wood:1,stone:2.1,pig:.68}[entity.material]||1;damageEntity(entity,(speed-170)*.032/resistance,body,false);}
+  }
+}
+function damageEntity(entity,amount,body,direct){
+  if(!Number.isFinite(amount)||amount<=0||entity.hp<=0)return;const wasAlive=entity.hp>0;entity.hp=Math.max(0,entity.hp-amount);game.score+=amount*(direct?14:6);
+  if(amount>10){game.shake=Math.min(11,game.shake+amount*.045);game.impactFlash=Math.min(1,game.impactFlash+amount/130);burst(body.position.x,body.position.y,materialColor(entity.material),Math.min(18,5+Math.round(amount/12)));}
+  if(wasAlive&&entity.hp<=0){game.score+=entity.kind==="pig"?1200:350;simulation.pending.add(body);burst(entity.x,entity.y,materialColor(entity.material),20);}
+}
+function makeProjectile(type,x,y,vx,vy,primary=true,id="bird",r=type==="bomb"?22:18){
+  const projectile={id,type,x,y,vx,vy,angle:Math.atan2(vy,vx),r,primary,abilityUsed:false,dead:false,age:0,body:null};
+  if(simulation.engine&&isAuthority()){
+    const body=Bodies.circle(x,y,r,{label:`bird:${id}`,density:.0048,friction:.62,frictionAir:.002,restitution:.36,slop:.02,sleepThreshold:55});body.gameType="bird";body.projectile=projectile;projectile.body=body;
+    Body.setVelocity(body,{x:vx/60,y:vy/60});Composite.add(simulation.engine.world,body);
+  }
+  return projectile;
+}
 function startProjectile(type,vx,vy){
-  game.projectiles=[{id:"bird",type,x:SLING.x,y:SLING.y,vx,vy,r:type==="bomb"?22:18,primary:true,abilityUsed:false,dead:false,age:0,hit:new Set()}];
+  if(isAuthority()&&!simulation.engine)initPhysics();game.projectiles=[makeProjectile(type,SLING.x,SLING.y,vx,vy)];
   game.abilityUsed=false;game.shotAt=performance.now();game.shotSleeping=0;$("#phaseLabel").textContent=`${game.birds[type].name}飞行中`;
 }
-
+function setProjectileVelocity(projectile,vx,vy){projectile.vx=vx;projectile.vy=vy;if(projectile.body)Body.setVelocity(projectile.body,{x:vx/60,y:vy/60});}
 function useAbility(){
   const bird=game.projectiles.find(p=>p.primary&&!p.dead&&!p.abilityUsed);if(!bird)return;bird.abilityUsed=true;
-  if(bird.type==="red"){bird.vx*=1.32;bird.vy*=1.18;burst(bird.x,bird.y,"#ef5b42");}
-  else if(bird.type==="yellow"){bird.vx*=1.72;bird.vy*=1.35;burst(bird.x,bird.y,"#f5c43e");}
+  if(bird.type==="red"){setProjectileVelocity(bird,bird.vx*1.35,bird.vy*1.18);burst(bird.x,bird.y,"#ef5b42",18);}
+  else if(bird.type==="yellow"){setProjectileVelocity(bird,bird.vx*1.72,bird.vy*1.33);burst(bird.x,bird.y,"#f5c43e",20);}
   else if(bird.type==="blue"){
-    for(const sign of [-1,1])game.projectiles.push({...bird,id:`split${sign}`,primary:false,r:12,vx:bird.vx+sign*45,vy:bird.vy+sign*170,hit:new Set()});burst(bird.x,bird.y,"#7dd9f0");
-  } else if(bird.type==="bomb"){ explode(bird.x,bird.y,145,95);bird.dead=true; }
+    for(const sign of [-1,1])game.projectiles.push(makeProjectile("blue",bird.x,bird.y,bird.vx+sign*35,bird.vy+sign*175,false,`split${sign}`,12));burst(bird.x,bird.y,"#7dd9f0",22);
+  }else if(bird.type==="bomb"){explode(bird.x,bird.y,150,120);bird.dead=true;if(bird.body)simulation.pending.add(bird.body);}
   updateHud();
 }
-
-const particles=[];
-function burst(x,y,color,count=14){for(let i=0;i<count;i++){const a=Math.random()*Math.PI*2,s=60+Math.random()*180;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.65,color});}}
-function explode(x,y,r,damage){burst(x,y,"#efb438",32);for(const e of game.entities){const d=Math.hypot(e.x-x,e.y-y);if(d<r){e.hp=Math.max(0,e.hp-damage*(1-d/r)*(e.material==="stone"?.6:1.25));e.vx+=(e.x-x)/(d||1)*420;e.vy+=(e.y-y)/(d||1)*420;}}game.score+=500;}
-
+function burst(x,y,color,count=14){for(let i=0;i<count;i++){const a=Math.random()*Math.PI*2,s=55+Math.random()*210;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.45+Math.random()*.4,color,size:2+Math.random()*5,spin:(Math.random()-.5)*8,angle:Math.random()*6});}}
+function explode(x,y,r,damage){
+  burst(x,y,"#efb438",42);game.shake=14;game.impactFlash=1;
+  for(const entity of game.entities){if(entity.hp<=0)continue;const d=Math.hypot(entity.x-x,entity.y-y);if(d>=r)continue;const body=simulation.bodies.get(entity.id),factor=1-d/r;damageEntity(entity,damage*factor*(entity.material==="stone"?.62:1.18),body||{position:entity},true);if(body){const nx=(entity.x-x)/(d||1),ny=(entity.y-y)/(d||1);Body.setVelocity(body,{x:body.velocity.x+nx*factor*12,y:body.velocity.y+ny*factor*12});Sleeping.set(body,false);}}
+  game.score+=500;
+}
 function livingPigs(){return game.entities.filter(e=>e.kind==="pig"&&e.hp>0&&e.y<720).length;}
-function rectHitCircle(e,p){const cx=Math.max(e.x-e.w/2,Math.min(p.x,e.x+e.w/2)),cy=Math.max(e.y-e.h/2,Math.min(p.y,e.y+e.h/2));return {hit:(p.x-cx)**2+(p.y-cy)**2<p.r**2,cx,cy};}
 function physics(dt){
-  if(game.phase!=="battle")return;
-  // Simple stable stack physics: bodies fall until the ground or another live body supports them.
-  const live=game.entities.filter(e=>e.hp>0);
-  for(const e of live){
-    e.vy=(e.vy||0)+720*dt;e.x+=(e.vx||0)*dt;e.y+=e.vy*dt;e.vx*=Math.pow(.18,dt);
-    let floor=GROUND;
-    for(const base of live){if(base===e||base.y<=e.y)continue;const overlapX=Math.min(e.x+e.w/2,base.x+base.w/2)-Math.max(e.x-e.w/2,base.x-base.w/2);const top=base.y-base.h/2;if(overlapX>Math.min(14,e.w*.3)&&e.y+e.h/2<=top+Math.max(12,Math.abs(e.vy)*dt+4))floor=Math.min(floor,top);}
-    if(e.y+e.h/2>=floor){e.y=floor-e.h/2;if(e.vy>210)e.hp=Math.max(0,e.hp-(e.vy-200)*.035*(e.material==="glass"?2:1));e.vy=0;}
-    if(e.x<-120||e.x>1320||e.y>730)e.hp=0;
+  const authority=isAuthority();
+  if(game.phase==="battle"&&authority&&simulation.engine){
+    const fixedStep=1000/60;simulation.accumulator=Math.min(fixedStep*3,simulation.accumulator+dt*1000);while(simulation.accumulator>=fixedStep){Engine.update(simulation.engine,fixedStep);simulation.accumulator-=fixedStep;}
+    for(const [id,body] of simulation.bodies){const entity=body.gameEntity;if(!entity||entity.hp<=0)continue;entity.x=body.position.x;entity.y=body.position.y;entity.angle=body.angle;entity.vx=body.velocity.x*60;entity.vy=body.velocity.y*60;if(entity.x<-140||entity.x>1340||entity.y>760){entity.hp=0;simulation.pending.add(body);}}
+    for(const projectile of game.projectiles){if(projectile.body){projectile.x=projectile.body.position.x;projectile.y=projectile.body.position.y;projectile.vx=projectile.body.velocity.x*60;projectile.vy=projectile.body.velocity.y*60;projectile.angle=Math.atan2(projectile.vy,projectile.vx);projectile.age+=dt;}if(projectile.x>1350||projectile.x<-150||projectile.y>760||projectile.age>20){projectile.dead=true;if(projectile.body)simulation.pending.add(projectile.body);}}
+    for(const body of simulation.pending){Composite.remove(simulation.engine.world,body);if(body.gameType==="entity")simulation.bodies.delete(body.gameEntity.id);if(body.gameType==="bird"&&body.projectile)body.projectile.body=null;}simulation.pending.clear();
+    const activeProjectile=game.projectiles.some(p=>!p.dead&&(p.body?(!p.body.isSleeping&&p.body.speed>.28):Math.hypot(p.vx,p.vy)>18)&&p.age<20),activeStructure=[...simulation.bodies.values()].some(body=>!body.isSleeping&&body.speed>.24);const active=activeProjectile||activeStructure;
+    if(game.projectiles.length){game.shotSleeping=active?0:game.shotSleeping+dt;if(game.shotSleeping>1.15||performance.now()-game.shotAt>20000)endShot();}
+    if(game.mode==="multi"&&game.role==="bird"&&game.projectiles.length&&performance.now()-game.simSent>125){game.simSent=performance.now();send({type:"sim",entities:game.entities.map(entity=>({id:entity.id,x:entity.x,y:entity.y,vx:entity.vx,vy:entity.vy,angle:entity.angle,hp:entity.hp})),bird:game.projectiles[0]?{x:game.projectiles[0].x,y:game.projectiles[0].y,angle:game.projectiles[0].angle}:null});}
   }
-  for(const p of game.projectiles){
-    if(p.dead)continue;p.age+=dt;p.vy+=730*dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=Math.pow(.997,dt*60);
-    if(p.y+p.r>GROUND){p.y=GROUND-p.r;p.vy*=-.34;p.vx*=.66;if(Math.abs(p.vy)<35)p.vy=0;}
-    for(const e of live){if(e.hp<=0)continue;const collision=rectHitCircle(e,p);if(!collision.hit)continue;
-      const speed=Math.hypot(p.vx,p.vy),dx=p.x-collision.cx,dy=p.y-collision.cy,len=Math.hypot(dx,dy)||1,nx=dx/len,ny=dy/len;
-      p.x=collision.cx+nx*(p.r+1);const resistance={glass:.42,wood:.78,stone:1.4,pig:.62}[e.material]||1;
-      const power=game.birds[p.type]?.power||1,damage=Math.max(0,(speed-90)*.12*power/resistance);
-      if(!p.hit.has(e.id)||speed>280){e.hp=Math.max(0,e.hp-damage);e.vx+=(p.vx*.16)/resistance;e.vy+=(p.vy*.09)/resistance;p.hit.add(e.id);game.score+=damage*12+(e.hp<=0?350:0);if(e.hp<=0)burst(e.x,e.y,materialColor(e.material),12);}
-      const dot=p.vx*nx+p.vy*ny;if(dot<0){p.vx-=1.42*dot*nx;p.vy-=1.42*dot*ny;}p.vx*=.72;p.vy*=.72;
-    }
-    if(p.x>1300||p.y>720||p.age>18)p.dead=true;
-  }
-  for(const particle of particles){particle.vy+=300*dt;particle.x+=particle.vx*dt;particle.y+=particle.vy*dt;particle.life-=dt;}
-  for(let i=particles.length-1;i>=0;i--)if(particles[i].life<=0)particles.splice(i,1);
-  const active=game.projectiles.some(p=>!p.dead&&(Math.hypot(p.vx,p.vy)>18||p.age<1.2));
-  if(game.projectiles.length){game.shotSleeping=active?0:game.shotSleeping+dt;if(game.shotSleeping>1||performance.now()-game.shotAt>19000)endShot();}
-  if(game.mode==="multi"&&game.role==="bird"&&game.projectiles.length&&performance.now()-game.simSent>125){game.simSent=performance.now();send({type:"sim",entities:game.entities.map(entity=>({id:entity.id,x:entity.x,y:entity.y,vx:entity.vx,vy:entity.vy,hp:entity.hp})),bird:game.projectiles[0]?{x:game.projectiles[0].x,y:game.projectiles[0].y}:null});}
-  updateHud();
+  for(const particle of particles){particle.vy+=330*dt;particle.x+=particle.vx*dt;particle.y+=particle.vy*dt;particle.angle+=particle.spin*dt;particle.life-=dt;}
+  for(let i=particles.length-1;i>=0;i--)if(particles[i].life<=0)particles.splice(i,1);game.shake=Math.max(0,game.shake-28*dt);game.impactFlash=Math.max(0,game.impactFlash-3.5*dt);updateHud();
 }
-
 function endShot(){
-  if(!game.projectiles.length)return;game.projectiles=[];game.shotSleeping=0;
+  if(!game.projectiles.length)return;for(const projectile of game.projectiles)if(projectile.body&&simulation.engine)Composite.remove(simulation.engine.world,projectile.body);game.projectiles=[];game.shotSleeping=0;
   if(livingPigs()===0){if(game.mode==="single")finishSingle(true);else if(game.role==="bird")sendShotEnd();return;}
   if(game.mode==="single"){
     if(!game.queue.length)finishSingle(false);else{$("#phaseLabel").textContent="准备发射";$("#canvasHint").textContent="拖动下一只小鸟";}
   } else if(game.role==="bird")sendShotEnd();
 }
-function sendShotEnd(){send({type:"shot_end",entities:game.entities.map(e=>({id:e.id,x:e.x,y:e.y,hp:e.hp}))});}
+function sendShotEnd(){send({type:"shot_end",entities:game.entities.map(e=>({id:e.id,x:e.x,y:e.y,angle:e.angle||0,hp:e.hp}))});}
 function applyRemoteSim(message){
   const map=new Map(game.entities.map(e=>[e.id,e]));for(const remote of message.entities||[]){const e=map.get(remote.id);if(e)Object.assign(e,remote);}
-  if(message.bird&&game.projectiles[0]){game.projectiles[0].x=message.bird.x;game.projectiles[0].y=message.bird.y;}
+  if(message.bird&&game.projectiles[0]){game.projectiles[0].x=message.bird.x;game.projectiles[0].y=message.bird.y;game.projectiles[0].angle=message.bird.angle||0;}
 }
 
 function canvasPoint(event){const rect=canvas.getBoundingClientRect();return{x:(event.clientX-rect.left)*W/rect.width,y:(event.clientY-rect.top)*H/rect.height};}
 function itemAt(point){return [...game.entities].reverse().find(e=>e.hp>0&&Math.abs(point.x-e.x)<=e.w/2+5&&Math.abs(point.y-e.y)<=e.h/2+5);}
+function validatePreview(candidate,excludeId=null){
+  if(candidate.rawX<700||candidate.rawX>1165||candidate.rawY<80||candidate.rawY>GROUND)return {valid:false,reason:"移入虚线建造区"};
+  if(candidate.x-candidate.w/2<700||candidate.x+candidate.w/2>1165||candidate.y-candidate.h/2<80||candidate.y+candidate.h/2>GROUND)return {valid:false,reason:"超出建造边界"};
+  if(candidate.kind==="pig"&&!excludeId&&game.entities.filter(e=>e.kind==="pig"&&e.hp>0).length>=3)return {valid:false,reason:"最多安置 3 只猪"};
+  const collision=game.entities.some(e=>e.id!==excludeId&&e.hp>0&&Math.abs(candidate.x-e.x)<(candidate.w+e.w)/2-2&&Math.abs(candidate.y-e.y)<(candidate.h+e.h)/2-2);
+  if(collision)return {valid:false,reason:"这里与已有物品重叠"};
+  return {valid:true,reason:"点击放置"};
+}
+function placementPreview(){
+  if(!game.selectedKind||!game.pointer.inside||game.dragging||game.phase!=="fortify"||game.role!=="pig")return null;const spec=game.itemSpecs[game.selectedKind];if(!spec)return null;
+  const rawX=game.pointer.x,rawY=game.pointer.y,x=Math.max(700+spec.w/2,Math.min(1165-spec.w/2,Math.round(rawX/5)*5)),y=Math.max(80+spec.h/2,Math.min(GROUND-spec.h/2,Math.round(rawY/5)*5));
+  const candidate={id:"preview",kind:game.selectedKind,material:spec.material,w:spec.w,h:spec.h,hp:spec.hp,maxHp:spec.hp,x,y,rawX,rawY,angle:0};return {...candidate,...validatePreview(candidate)};
+}
 canvas.addEventListener("pointerdown",event=>{
-  const point=canvasPoint(event);
+  const point=canvasPoint(event);game.pointer={...point,inside:true};
   if(game.mode==="multi"&&game.role==="pig"&&game.phase==="fortify"&&!game.serverState.ready.includes("pig")){
-    const existing=itemAt(point);if(existing){game.dragging={id:existing.id,dx:point.x-existing.x,dy:point.y-existing.y};canvas.setPointerCapture(event.pointerId);}
-    else if(game.selectedKind)send({type:"build",action:"add",kind:game.selectedKind,x:point.x,y:point.y});else toast("请先从左侧选择建筑物品");return;
+    const existing=itemAt(point);if(existing){game.dragging={id:existing.id,dx:point.x-existing.x,dy:point.y-existing.y,origin:{x:existing.x,y:existing.y},valid:true};canvas.setPointerCapture(event.pointerId);}
+    else if(game.selectedKind){const preview=placementPreview();if(preview?.valid)send({type:"build",action:"add",kind:game.selectedKind,x:preview.x,y:preview.y});else toast(preview?.reason||"当前位置不能放置");}else toast("请先从左侧选择建筑物品");return;
   }
   if(game.role==="bird"&&game.phase==="battle"&&!game.projectiles.length&&game.queue.length&&Math.hypot(point.x-SLING.x,point.y-SLING.y)<55){game.aiming=true;game.aim=point;canvas.setPointerCapture(event.pointerId);return;}
   if(game.projectiles.length)useAbility();
 });
 canvas.addEventListener("pointermove",event=>{
-  const point=canvasPoint(event);if(game.aiming){const dx=point.x-SLING.x,dy=point.y-SLING.y,len=Math.hypot(dx,dy),scale=Math.min(125,len)/(len||1);game.aim={x:SLING.x+dx*scale,y:SLING.y+dy*scale};}
-  if(game.dragging){const e=game.entities.find(item=>item.id===game.dragging.id);if(e){e.x=Math.max(700,Math.min(1165,point.x-game.dragging.dx));e.y=Math.max(80,Math.min(GROUND,point.y-game.dragging.dy));}}
+  const point=canvasPoint(event);game.pointer={...point,inside:true};if(game.aiming){const dx=point.x-SLING.x,dy=point.y-SLING.y,len=Math.hypot(dx,dy),scale=Math.min(125,len)/(len||1);game.aim={x:SLING.x+dx*scale,y:SLING.y+dy*scale};}
+  if(game.dragging){const e=game.entities.find(item=>item.id===game.dragging.id);if(e){e.x=Math.max(700+e.w/2,Math.min(1165-e.w/2,Math.round((point.x-game.dragging.dx)/5)*5));e.y=Math.max(80+e.h/2,Math.min(GROUND-e.h/2,Math.round((point.y-game.dragging.dy)/5)*5));game.dragging.valid=validatePreview({...e,rawX:point.x,rawY:point.y},e.id).valid;}}
 });
 canvas.addEventListener("pointerup",event=>{
   if(game.aiming){game.aiming=false;const dx=SLING.x-game.aim.x,dy=SLING.y-game.aim.y,power=Math.hypot(dx,dy);game.aim={...SLING};if(power<22){toast("再向后多拉一些");return;}const vx=dx*8.2,vy=dy*8.2;if(game.mode==="multi")send({type:"fire",vx,vy});else{const bird=game.queue.shift();startProjectile(bird,vx,vy);} }
-  if(game.dragging){const e=game.entities.find(item=>item.id===game.dragging.id);if(e)send({type:"build",action:"move",id:e.id,x:e.x,y:e.y});game.dragging=null;}
+  if(game.dragging){const e=game.entities.find(item=>item.id===game.dragging.id);if(e&&game.dragging.valid)send({type:"build",action:"move",id:e.id,x:e.x,y:e.y});else if(e){Object.assign(e,game.dragging.origin);toast("该位置与其他物品重叠");}game.dragging=null;}
 });
+canvas.addEventListener("pointerenter",event=>{game.pointer={...canvasPoint(event),inside:true};});
+canvas.addEventListener("pointerleave",()=>{game.pointer.inside=false;});
 canvas.addEventListener("contextmenu",event=>{event.preventDefault();if(game.mode==="multi"&&game.role==="pig"&&game.phase==="fortify"){const e=itemAt(canvasPoint(event));if(e)send({type:"build",action:"remove",id:e.id});}});
 
-function drawBird(x,y,type,r=18){
-  ctx.save();ctx.translate(x,y);ctx.fillStyle=birdColor(type);ctx.strokeStyle="#152832";ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.stroke();
-  ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(r*.32,-r*.22,r*.28,0,Math.PI*2);ctx.fill();ctx.fillStyle="#152832";ctx.beginPath();ctx.arc(r*.4,-r*.2,r*.1,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle="#efb63a";ctx.beginPath();ctx.moveTo(r*.68,0);ctx.lineTo(r*1.18,r*.12);ctx.lineTo(r*.7,r*.3);ctx.closePath();ctx.fill();ctx.restore();
+function drawBird(x,y,type,r=18,angle=0,alpha=1){
+  const image=images[type];ctx.save();ctx.translate(x,y);ctx.rotate(Number.isFinite(angle)?angle:0);ctx.globalAlpha=alpha;
+  if(image?.complete&&image.naturalWidth){const scale={red:[2.65,2.45],yellow:[3.15,2.7],blue:[2.75,2.75],bomb:[2.8,2.65]}[type]||[2.6,2.6],width=r*scale[0],height=r*scale[1];ctx.drawImage(image,-width*.5,-height*.5,width,height);}
+  else{ctx.fillStyle=birdColor(type);ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();}
+  ctx.restore();
 }
-function drawPig(e){
-  const r=Math.min(e.w,e.h)/2;ctx.save();ctx.translate(e.x,e.y);ctx.fillStyle="#98cc45";ctx.strokeStyle="#27452d";ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();ctx.stroke();
-  ctx.fillStyle="#bce86a";ctx.beginPath();ctx.ellipse(4,6,r*.5,r*.35,0,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.fillStyle="#27452d";ctx.beginPath();ctx.arc(-1,5,2.5,0,7);ctx.arc(9,5,2.5,0,7);ctx.fill();
-  for(const x of [-7,8]){ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(x,-7,5.5,0,7);ctx.fill();ctx.fillStyle="#152832";ctx.beginPath();ctx.arc(x+1,-6,2,0,7);ctx.fill();}ctx.restore();
+function drawPig(e,alpha=1){
+  ctx.save();ctx.translate(e.x,e.y);ctx.rotate(e.angle||0);ctx.globalAlpha=alpha;const width=e.w*1.5,height=e.h*1.48;
+  if(images.pig.complete&&images.pig.naturalWidth)ctx.drawImage(images.pig,-width/2,-height/2,width,height);else{ctx.fillStyle="#98cc45";ctx.beginPath();ctx.arc(0,0,e.w/2,0,Math.PI*2);ctx.fill();}
+  if(e.hp/e.maxHp<.55&&alpha>.5){ctx.strokeStyle="rgba(40,52,32,.8)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-8,-18);ctx.lineTo(-2,-7);ctx.lineTo(-7,3);ctx.moveTo(13,-15);ctx.lineTo(7,-5);ctx.stroke();}ctx.restore();
 }
-function drawItem(e){
-  if(e.hp<=0)return;if(e.kind==="pig"){drawPig(e);return;}ctx.save();ctx.translate(e.x,e.y);ctx.fillStyle=materialColor(e.material);ctx.strokeStyle="#20353c";ctx.lineWidth=2;ctx.globalAlpha=Math.max(.25,e.hp/e.maxHp);ctx.fillRect(-e.w/2,-e.h/2,e.w,e.h);ctx.strokeRect(-e.w/2,-e.h/2,e.w,e.h);
-  if(e.material==="wood"){ctx.strokeStyle="rgba(70,36,13,.35)";for(let x=-e.w/2+12;x<e.w/2;x+=22){ctx.beginPath();ctx.moveTo(x,-e.h/2);ctx.lineTo(x+7,e.h/2);ctx.stroke();}}
-  else if(e.material==="stone"){ctx.strokeStyle="rgba(255,255,255,.28)";ctx.beginPath();ctx.moveTo(-e.w/2+5,0);ctx.lineTo(e.w/2-5,0);ctx.stroke();}
-  else{ctx.fillStyle="rgba(255,255,255,.4)";ctx.fillRect(-e.w/2+5,-e.h/2+3,e.w*.4,3);}ctx.restore();
+function drawItem(e,alpha=1){
+  if(e.hp<=0)return;if(e.kind==="pig"){drawPig(e,alpha);return;}ctx.save();ctx.translate(e.x,e.y);ctx.rotate(e.angle||0);ctx.fillStyle=materialColor(e.material);ctx.strokeStyle="#20353c";ctx.lineWidth=2;ctx.globalAlpha=alpha*(.72+.28*Math.max(0,e.hp/e.maxHp));ctx.fillRect(-e.w/2,-e.h/2,e.w,e.h);ctx.strokeRect(-e.w/2,-e.h/2,e.w,e.h);
+  if(e.material==="wood"){ctx.fillStyle="rgba(255,214,135,.18)";ctx.fillRect(-e.w/2+3,-e.h/2+3,e.w-6,Math.max(2,e.h*.22));ctx.strokeStyle="rgba(70,36,13,.38)";for(let x=-e.w/2+12;x<e.w/2;x+=22){ctx.beginPath();ctx.moveTo(x,-e.h/2);ctx.lineTo(x+7,e.h/2);ctx.stroke();}}
+  else if(e.material==="stone"){ctx.fillStyle="rgba(255,255,255,.16)";ctx.fillRect(-e.w/2+3,-e.h/2+3,e.w-6,Math.max(2,e.h*.2));ctx.strokeStyle="rgba(42,53,56,.35)";for(let x=-e.w/2+22;x<e.w/2;x+=34){ctx.beginPath();ctx.moveTo(x,-e.h/2);ctx.lineTo(x-5,e.h/2);ctx.stroke();}}
+  else{ctx.fillStyle="rgba(255,255,255,.45)";ctx.fillRect(-e.w/2+5,-e.h/2+3,e.w*.42,3);ctx.strokeStyle="rgba(32,90,104,.4)";ctx.beginPath();ctx.moveTo(-e.w*.18,-e.h/2);ctx.lineTo(-e.w*.05,e.h/2);ctx.stroke();}
+  if(e.hp/e.maxHp<.62&&alpha>.5){ctx.strokeStyle="rgba(38,33,31,.75)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-e.w*.12,-e.h/2);ctx.lineTo(0,-2);ctx.lineTo(-e.w*.08,e.h/2);ctx.stroke();}ctx.restore();
 }
 function draw(){
-  ctx.clearRect(0,0,W,H);if(images.background.complete)ctx.drawImage(images.background,0,0,W,GROUND);else{ctx.fillStyle="#91d5e4";ctx.fillRect(0,0,W,GROUND);}
+  ctx.clearRect(0,0,W,H);ctx.save();if(game.shake>0)ctx.translate((Math.random()-.5)*game.shake,(Math.random()-.5)*game.shake);if(images.background.complete)ctx.drawImage(images.background,0,0,W,GROUND);else{ctx.fillStyle="#91d5e4";ctx.fillRect(0,0,W,GROUND);}
   ctx.fillStyle="#699f43";ctx.fillRect(0,GROUND,W,H-GROUND);ctx.fillStyle="#85bb52";ctx.fillRect(0,GROUND,W,12);
   if(game.mode==="multi"&&game.phase==="fortify"){ctx.save();ctx.setLineDash([10,8]);ctx.lineWidth=3;ctx.strokeStyle="rgba(233,75,53,.7)";ctx.fillStyle="rgba(255,249,233,.12)";ctx.fillRect(700,80,465,GROUND-80);ctx.strokeRect(700,80,465,GROUND-80);ctx.fillStyle="#8c332c";ctx.font="800 13px sans-serif";ctx.fillText("小猪建造区",715,105);ctx.restore();}
-  for(const e of game.entities)drawItem(e);
+  for(const e of game.entities)drawItem(e,(game.dragging?.id===e.id)?0.62:1);
+  const preview=placementPreview();if(preview){drawItem(preview,.43);ctx.save();ctx.strokeStyle=preview.valid?"#64b93f":"#e14736";ctx.lineWidth=3;ctx.setLineDash([7,5]);ctx.strokeRect(preview.x-preview.w/2-4,preview.y-preview.h/2-4,preview.w+8,preview.h+8);ctx.setLineDash([]);ctx.font="800 11px sans-serif";const label=preview.reason,width=ctx.measureText(label).width+16;ctx.fillStyle=preview.valid?"rgba(39,100,50,.9)":"rgba(153,45,38,.92)";ctx.fillRect(preview.x-width/2,preview.y-preview.h/2-29,width,20);ctx.fillStyle="#fff";ctx.fillText(label,preview.x-width/2+8,preview.y-preview.h/2-15);ctx.restore();}
+  if(game.dragging&&!game.dragging.valid){const e=game.entities.find(item=>item.id===game.dragging.id);if(e){ctx.save();ctx.strokeStyle="#e14736";ctx.lineWidth=4;ctx.setLineDash([6,5]);ctx.strokeRect(e.x-e.w/2-4,e.y-e.h/2-4,e.w+8,e.h+8);ctx.restore();}}
   if(game.role==="bird"||game.mode==="single"){
     ctx.drawImage(images.sling,SLING.x-44,SLING.y-43,84,176);const canAim=game.phase==="battle"&&!game.projectiles.length&&game.queue.length;
-    if(canAim){const pos=game.aiming?game.aim:SLING;if(game.aiming){ctx.strokeStyle="#4c291b";ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(SLING.x-19,SLING.y-5);ctx.lineTo(pos.x,pos.y);ctx.lineTo(SLING.x+18,SLING.y-8);ctx.stroke();drawTrajectory(pos); }drawBird(pos.x,pos.y,game.queue[0]);}
+    if(canAim){const pos=game.aiming?game.aim:SLING;if(game.aiming){ctx.strokeStyle="#4c291b";ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(SLING.x-19,SLING.y-5);ctx.lineTo(pos.x,pos.y);ctx.lineTo(SLING.x+18,SLING.y-8);ctx.stroke();drawTrajectory(pos); }drawBird(pos.x,pos.y,game.queue[0],game.queue[0]==="bomb"?22:18,game.aiming?Math.atan2(SLING.y-pos.y,SLING.x-pos.x):0);}
   }
-  for(const p of game.projectiles)if(!p.dead)drawBird(p.x,p.y,p.type,p.r);
-  for(const p of particles){ctx.globalAlpha=Math.max(0,p.life/.65);ctx.fillStyle=p.color;ctx.fillRect(p.x-3,p.y-3,6,6);}ctx.globalAlpha=1;
+  for(const p of game.projectiles)if(!p.dead)drawBird(p.x,p.y,p.type,p.r,p.angle||0);
+  for(const p of particles){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);ctx.globalAlpha=Math.max(0,Math.min(1,p.life/.45));ctx.fillStyle=p.color;ctx.fillRect(-p.size/2,-p.size/2,p.size,p.size);ctx.restore();}ctx.restore();
+  if(game.impactFlash>0){ctx.fillStyle=`rgba(255,244,190,${game.impactFlash*.16})`;ctx.fillRect(0,0,W,H);}
 }
 function drawTrajectory(pos){const vx=(SLING.x-pos.x)*8.2,vy=(SLING.y-pos.y)*8.2;ctx.fillStyle="rgba(255,255,255,.75)";for(let t=.15;t<1.25;t+=.13){const x=SLING.x+vx*t,y=SLING.y+vy*t+365*t*t;ctx.beginPath();ctx.arc(x,y,3,0,7);ctx.fill();}}
 function frame(now){const dt=Math.min(.025,(now-game.lastFrame)/1000);game.lastFrame=now;physics(dt);draw();requestAnimationFrame(frame);}requestAnimationFrame(frame);
@@ -274,7 +332,7 @@ $("#roomCode").addEventListener("input",event=>event.target.value=event.target.v
 $("#readyBtn").addEventListener("click",()=>{if(!game.serverState)return;send({type:game.serverState.ready.includes(game.role)?"unready":"ready"})});
 $("#nextRoundBtn").addEventListener("click",()=>{if(game.mode==="single"){const next=game.phase==="ended"&&livingPigs()===0&&game.level<LEVELS.length-1?game.level+1:game.level;startSingle(next);}else{send({type:"next_round"});$("#nextRoundBtn").disabled=true;setTimeout(()=>$("#nextRoundBtn").disabled=false,1200);}});
 $("#copyCode").addEventListener("click",async()=>{try{await navigator.clipboard.writeText(game.room);toast("房间码已复制")}catch{toast(`房间码：${game.room}`)}});
-$("#exitGame").addEventListener("click",()=>{if(game.mode==="multi"&&!confirm("退出后房间会保留 3 分钟，确定退出？"))return;game.phase="menu";game.projectiles=[];game.entities=[];sessionStorage.removeItem("flock-session");showScreen("home")});
+$("#exitGame").addEventListener("click",()=>{if(game.mode==="multi"&&!confirm("退出后房间会保留 3 分钟，确定退出？"))return;game.phase="menu";game.projectiles=[];game.entities=[];destroyPhysics();sessionStorage.removeItem("flock-session");showScreen("home")});
 $("#soundBtn").addEventListener("click",()=>{game.sound=!game.sound;$("#soundBtn").textContent=game.sound?"♪":"×"});
 $("#emotes").addEventListener("click",event=>{if(event.target.tagName==="BUTTON"&&game.mode==="multi")send({type:"emote",emote:event.target.textContent})});
 window.addEventListener("keydown",event=>{if(event.code==="Space"){event.preventDefault();useAbility()}if(event.key.toLowerCase()==="r"&&game.mode==="single"&&$("#game").classList.contains("active"))startSingle(game.level);if(event.key==="Escape"&&$("#rulesDialog").open)$("#rulesDialog").close();});

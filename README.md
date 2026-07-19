@@ -1,13 +1,15 @@
 # 怒羽攻城 / Flock Fortress
 
-轻量、无第三方运行时依赖的网页版弹弓攻防游戏。支持 4 个单人关卡，以及实时双人“小鸟进攻 / 小猪筑城”五局三胜对战。
+轻量、无第三方服务端运行时依赖的网页版弹弓攻防游戏。支持 4 个单人关卡，以及实时双人“小鸟进攻 / 小猪筑城”五局三胜对战。浏览器端内置 Matter.js 刚体引擎，服务器仍保持单个 Python 进程。
 
 ## 玩法
 
 - 单人：向后拖动弹弓上的小鸟，松开发射；飞行中点击画布或按空格使用一次能力。
 - 双人鸟方：在每回合准备阶段购买 1–6 只不同价位的小鸟，准备后依次发射。
 - 双人猪方：购买梁、柱、玻璃和 1–3 只猪，在虚线区域点击放置；拖拽调整，右键删除退款。
+- 选择建筑材料后，画布会显示随鼠标移动的半透明网格预览；绿色表示可放置，红色会说明越界或重叠原因。
 - 筑城确认时，服务端检查数量、越界、重叠与结构支撑。猪全灭则鸟方赢；小鸟耗尽则猪方赢；先胜 3 回合赢得比赛。
+- 战斗使用固定 60Hz 刚体模拟：木材、石材、玻璃和角色具有不同密度、摩擦、弹性与冲击耐久，结构会旋转、坍塌、休眠并受到爆炸冲量。
 - 经济：鸟/猪分别以 500/700 开局；胜者 +150，败者 +240 与最高 +180 连败补偿；摧毁建筑/猪有小额奖励；资金封顶 1200。
 
 ## 本地运行
@@ -38,4 +40,4 @@ sudo ./deploy/install-service.sh
 
 ## 参考与许可
 
-玩法结构、示例梁柱布局，以及 `background.png`、`red-bird.png`、`sling.png`、`wood-source.png` 参考/取自 [estevaofon/angry-birds-python](https://github.com/estevaofon/angry-birds-python)（MIT，版权归 Estevao）。原许可证保存在 `REFERENCE_LICENSE`。本项目未将任何密码、Token 或私钥写入代码。
+玩法结构、示例梁柱布局，以及背景、弹弓和角色精灵参考/取自 [estevaofon/angry-birds-python](https://github.com/estevaofon/angry-birds-python)（MIT，版权归 Estevao）。浏览器物理使用 [Matter.js 0.20.0](https://github.com/liabru/matter-js)（MIT）。许可证和商标说明见 `REFERENCE_LICENSE`、`public/vendor/MATTER-LICENSE` 与 `THIRD_PARTY_NOTICES.md`。本项目未将任何密码、Token 或私钥写入代码。
