@@ -3,6 +3,7 @@ import importlib.util
 import pathlib
 import sys
 import unittest
+from types import SimpleNamespace
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("flock_app", ROOT / "server" / "app.py")
@@ -66,6 +67,16 @@ class EconomyTests(unittest.IsolatedAsyncioTestCase):
         room.phase = "battle"
         await room.finish_round("bird", "test")
         self.assertEqual(room.phase, "match_end")
+
+
+class RoomLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_last_departure_removes_room_immediately(self):
+        room = app.Room("EMPTY1", object(), "bird")
+        client = SimpleNamespace(room=room, role="bird", closed=True)
+        room.players = {"bird": client, "pig": None}
+        app.ROOMS[room.code] = room
+        await app.detach_client(client)
+        self.assertNotIn(room.code, app.ROOMS)
 
 
 if __name__ == "__main__":

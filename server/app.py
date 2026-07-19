@@ -228,6 +228,20 @@ ROOMS: dict[str, Room] = {}
 CLIENTS: set[Client] = set()
 
 
+async def detach_client(client: Client) -> None:
+    """Detach a socket and immediately discard a room once nobody remains online."""
+    room, role = client.room, client.role
+    if not room or not role or room.players.get(role) is not client:
+        return
+    room.players[role] = None
+    connected = any(peer and not peer.closed for peer in room.players.values())
+    if not connected:
+        if ROOMS.pop(room.code, None) is not None:
+            LOG.info("removed empty room %s", room.code)
+        return
+    await room.broadcast({"type": "disconnected", "role": role, "grace": ROOM_TTL})
+
+
 def room_code() -> str:
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     for _ in range(50):
@@ -295,6 +309,13 @@ async def handle_message(client: Client, data: dict[str, Any]) -> None:
     room, role = client.room, client.role
     if not room or not role:
         return await client.error("请先创建或加入房间")
+    if kind == "leave_room":
+        await detach_client(client)
+        client.room = None
+        client.role = None
+        client.token = None
+        await client.send({"type": "left"})
+        return
     if kind == "buy_bird":
         if role != "bird" or room.phase != "fortify" or role in room.ready:
             return await client.error("当前不能购买小鸟")
@@ -533,8 +554,7 @@ async def websocket_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWri
     finally:
         client.closed = True
         CLIENTS.discard(client)
-        if client.room and client.role and client.room.players.get(client.role) is client:
-            await client.room.broadcast({"type": "disconnected", "role": client.role, "grace": ROOM_TTL})
+        await detach_client(client)
         writer.close()
         try:
             await writer.wait_closed()
@@ -614,7 +634,7 @@ async def cleanup_loop() -> None:
         await asyncio.sleep(30)
         now = time.monotonic()
         expired = []
-        for code, room in ROOMS.items():
+        for code, room in list(ROOMS.items()):
             if room.phase == "battle" and room.active_bird and now - room.shot_started > 25:
                 room.active_bird = None
                 if not room.bird_queue:

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <meta name="theme-color" content="#132d3a">
   <title>怒羽攻城 · Flock Fortress</title>
-  <link rel="stylesheet" href="/styles.css?v=2">
+  <link rel="stylesheet" href="/styles.css?v=3">
 </head>
 <body>
   <main id="app">
@@ -71,6 +71,7 @@
           <div id="waitingCard" class="waiting-card hidden"><span class="pulse"></span><strong>等待另一位玩家</strong><p>房间码</p><button id="copyCode">------</button><small>点击复制并发给好友</small></div>
           <div id="roundOverlay" class="round-overlay hidden"><p id="overlayEyebrow">回合结束</p><h2 id="overlayTitle">小鸟获胜</h2><p id="overlayReason"></p><button id="nextRoundBtn">准备下一回合</button></div>
           <div id="abilityPrompt" class="ability-prompt hidden">点击或按 <kbd>空格</kbd> 使用能力</div>
+          <button id="sellBin" class="sell-bin hidden" type="button" aria-label="出售防御物品"><span aria-hidden="true">🗑️</span><strong>拖到这里卖出</strong><small>全额返还钱币</small></button>
         </div>
       </div>
       <footer class="game-footer"><span id="footerHelp">鼠标拖拽瞄准 · 松开发射 · 空格使用能力</span><div id="emotes" class="emotes"><button>👍</button><button>😄</button><button>😱</button><button>💥</button></div></footer>
@@ -88,6 +89,6 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
   <script src="/vendor/matter.min.js?v=0.20.0" defer></script>
-  <script src="/game.js?v=8" defer></script>
+  <script src="/game.js?v=12" defer></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
 import {createRequire} from "node:module";
 const require = createRequire(import.meta.url);
 const Matter = require("../public/vendor/matter.min.js");
-const {Engine, Bodies, Composite} = Matter;
+const {Engine, Bodies, Composite, Sleeping} = Matter;
 
 const engine = Engine.create({enableSleeping:true});
 engine.gravity.y = 1;
@@ -31,4 +31,18 @@ for(let index=0;index<bodies.length;index++){
     throw new Error(`tower body ${index} failed to settle: ${JSON.stringify({position:body.position,speed:body.speed})}`);
   }
 }
-console.log("physics smoke ok: fixed-step tower remains stable");
+
+// Removing any supporting entity must wake every sleeping dynamic body so no
+// pig, beam, or post can remain suspended after its support disappears.
+const support=Bodies.rectangle(1090,540,22,100,{density:.0017});
+const suspended=Bodies.rectangle(1090,480,110,20,{density:.0017});
+Composite.add(engine.world,[support,suspended]);
+for(let frame=0;frame<120;frame++)Engine.update(engine,fixedStep);
+Sleeping.set(support,true);Sleeping.set(suspended,true);
+const beforeDrop=suspended.position.y;
+Composite.remove(engine.world,support);
+for(const body of [...bodies,suspended])Sleeping.set(body,false);
+for(let frame=0;frame<45;frame++)Engine.update(engine,fixedStep);
+if(suspended.position.y<beforeDrop+25)throw new Error(`unsupported body did not fall: ${suspended.position.y-beforeDrop}`);
+
+console.log("physics smoke ok: tower stable and unsupported bodies wake/fall");

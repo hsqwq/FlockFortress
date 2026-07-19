@@ -48,6 +48,12 @@ await pig.wait(message => message.type === "joined");
 await bird.wait(message => message.type === "state" && message.phase === "fortify");
 
 await stateAfter(bird, {type:"buy_bird", bird:"red"});
+pig.send({type:"build",action:"add",kind:"wood_post",x:760,y:540});
+let sellState = await pig.wait(message=>message.type==="state"&&message.items.some(item=>item.kind==="wood_post"&&item.x===760));
+const soldItem = sellState.items.find(item=>item.kind==="wood_post");
+pig.send({type:"build",action:"remove",id:soldItem.id});
+sellState = await pig.wait(message=>message.type==="state"&&message.credits.pig===700&&!message.items.some(item=>item.id===soldItem.id));
+if(sellState.credits.pig!==700||sellState.items.some(item=>item.id===soldItem.id))throw new Error("pig item sale did not refund in full");
 for (const build of [
   {kind:"wood_post",x:820,y:540}, {kind:"wood_post",x:920,y:540},
   {kind:"wood_beam",x:870,y:480}, {kind:"pig",x:870,y:569},
@@ -67,6 +73,13 @@ bird.send({type:"next_round"}); pig.send({type:"next_round"});
 const roundTwo = await bird.wait(message => message.type === "state" && message.phase === "fortify" && message.round === 2);
 if (roundTwo.credits.pig <= 700) throw new Error("loss bonus was not awarded");
 bird.ws.close(); pig.ws.close();
+await new Promise(resolve=>setTimeout(resolve,120));
+const probe=peer("probe");
+await probe.wait(message=>message.type==="hello");
+probe.send({type:"resume",room:joinedBird.room,token:joinedBird.token});
+const gone=await probe.wait(message=>message.type==="error");
+if(gone.code!=="not_found")throw new Error("empty room was not removed immediately");
+probe.ws.close();
 console.log(`multiplayer smoke ok: room ${joinedBird.room}, round ${roundTwo.round}`);
 } catch (error) {
   console.error("bird messages", bird.messages.map(message => [message.type,message.phase,message.message]));
