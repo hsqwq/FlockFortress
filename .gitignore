@@ -1,0 +1,60 @@
+# Operating system metadata
+.DS_Store
+**/.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# JavaScript dependencies and tool caches
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.parcel-cache/
+.cache/
+coverage/
+
+# Runtime data, logs, temporary files and local overrides
+*.log
+*.pid
+*.pid.lock
+tmp/
+temp/
+*.tmp
+*.swp
+*.swo
+.env
+.env.*
+!.env.example
+
+# IDE settings
+.idea/
+.vscode/
+*.code-workspace
+
+# Credentials and private keys must never be committed
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+
+# Generated archives and build output
+dist/
+build/
+*.tar
+*.tar.gz
+*.zip

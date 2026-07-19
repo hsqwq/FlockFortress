@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <meta name="theme-color" content="#132d3a">
+  <title>怒羽攻城 · Flock Fortress</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="app">
+    <section id="home" class="screen home-screen active" aria-label="主菜单">
+      <div class="cloud cloud-a"></div><div class="cloud cloud-b"></div>
+      <div class="home-copy">
+        <p class="eyebrow">FLOCK FORTRESS · 怒羽攻城</p>
+        <h1>拉紧弹弓，<br><span>撞开他们的堡垒。</span></h1>
+        <p class="intro">一款从经典抛射玩法汲取灵感的浏览器攻防游戏。独闯四座堡垒，或与好友分别扮演小鸟与小猪，真正亲手搭建防线。</p>
+        <div class="mode-grid">
+          <button class="mode-card bird-mode" id="singleBtn">
+            <span class="mode-number">01</span><span class="mode-icon">●</span>
+            <strong>单人远征</strong><small>4 个手工关卡 · 4 种能力小鸟</small>
+          </button>
+          <button class="mode-card pig-mode" id="multiBtn">
+            <span class="mode-number">02</span><span class="mode-icon">♟</span>
+            <strong>双人攻防</strong><small>实时房间 · 经济系统 · 自由筑城</small>
+          </button>
+        </div>
+        <button class="text-button" id="rulesBtn">玩法与规则 →</button>
+      </div>
+      <aside class="home-stats"><span>4</span> 鸟种<br><span>4</span> 关卡<br><span>5</span> 局 3 胜</aside>
+    </section>
+
+    <section id="levelScreen" class="screen panel-screen" aria-label="选择关卡">
+      <button class="back-button" data-home>← 返回</button>
+      <div class="panel-heading"><p class="eyebrow">SOLO EXPEDITION</p><h2>选择堡垒</h2><p>每关的小鸟有限。连续得分、保留小鸟并摧毁结构可提高星级。</p></div>
+      <div id="levelGrid" class="level-grid"></div>
+    </section>
+
+    <section id="multiScreen" class="screen panel-screen" aria-label="双人大厅">
+      <button class="back-button" data-home>← 返回</button>
+      <div class="panel-heading"><p class="eyebrow">HEAD-TO-HEAD</p><h2>双人攻防</h2><p>创建者操控小鸟，加入者操控小猪。分享 6 位房间码即可开战。</p></div>
+      <div class="lobby-card">
+        <label>你的代号<input id="playerName" maxlength="16" autocomplete="nickname" placeholder="最多 16 个字符"></label>
+        <div class="lobby-actions">
+          <button class="primary-button" id="createBtn">创建房间 <span>成为小鸟</span></button>
+          <div class="join-box"><input id="roomCode" maxlength="6" autocomplete="off" placeholder="房间码" aria-label="房间码"><button id="joinBtn">加入 <span>成为小猪</span></button></div>
+        </div>
+        <p id="connectionStatus" class="connection-status">正在连接对战服务器…</p>
+      </div>
+      <div class="economy-note"><strong>平衡经济</strong><p>开局鸟方 500、猪方 700。胜方奖励 150；败方获得 240 + 连败补偿（最高额外 180）。鸟方摧毁建筑与小猪还可获得少量奖励，资金最多保留 1200。</p></div>
+    </section>
+
+    <section id="game" class="screen game-screen" aria-label="游戏场景">
+      <header class="game-header">
+        <button class="icon-button" id="exitGame" aria-label="退出">×</button>
+        <div class="match-id"><span id="gameModeLabel">单人远征</span><strong id="roomLabel">堡垒 01</strong></div>
+        <div class="scoreboard"><div><small id="leftTeam">小鸟</small><b id="birdScore">0</b></div><span id="roundLabel">第 1 回合</span><div><b id="pigScore">0</b><small id="rightTeam">小猪</small></div></div>
+        <div class="game-meta"><span id="phaseLabel">准备发射</span><button class="sound-button" id="soundBtn" aria-label="声音">♪</button></div>
+      </header>
+      <div class="game-layout">
+        <aside id="shopPanel" class="shop-panel">
+          <div class="shop-head"><p id="shopEyebrow">小鸟补给</p><strong><span id="coinValue">0</span> ◉</strong></div>
+          <div id="shopList" class="shop-list"></div>
+          <div id="queuePanel" class="queue-panel"><small>本回合队列</small><div id="birdQueue" class="bird-queue"></div></div>
+          <div class="ready-zone"><p id="validationHint">选择装备，准备进攻。</p><button id="readyBtn" class="ready-button">确认准备</button></div>
+        </aside>
+        <div class="stage-wrap">
+          <canvas id="gameCanvas" width="1200" height="675" aria-label="游戏画布"></canvas>
+          <div id="canvasHint" class="canvas-hint">拖动弹弓上的小鸟，松开发射</div>
+          <div id="roleBadge" class="role-badge"></div>
+          <div id="waitingCard" class="waiting-card hidden"><span class="pulse"></span><strong>等待另一位玩家</strong><p>房间码</p><button id="copyCode">------</button><small>点击复制并发给好友</small></div>
+          <div id="roundOverlay" class="round-overlay hidden"><p id="overlayEyebrow">回合结束</p><h2 id="overlayTitle">小鸟获胜</h2><p id="overlayReason"></p><button id="nextRoundBtn">准备下一回合</button></div>
+          <div id="abilityPrompt" class="ability-prompt hidden">点击或按 <kbd>空格</kbd> 使用能力</div>
+        </div>
+      </div>
+      <footer class="game-footer"><span id="footerHelp">鼠标拖拽瞄准 · 松开发射 · 空格使用能力</span><div id="emotes" class="emotes"><button>👍</button><button>😄</button><button>😱</button><button>💥</button></div></footer>
+    </section>
+
+    <dialog id="rulesDialog">
+      <button class="dialog-close" aria-label="关闭">×</button><p class="eyebrow">FIELD MANUAL</p><h2>玩法与规则</h2>
+      <div class="rules-grid">
+        <article><b>01</b><h3>瞄准与能力</h3><p>向后拖动小鸟瞄准，松开发射。飞行中点击画布或按空格触发一次专属能力：冲击、加速、分裂或爆破。</p></article>
+        <article><b>02</b><h3>猪方筑城</h3><p>购买材料后在虚线建造区放置。可拖拽已有物品，右键删除退款。准备时系统会检查重叠、越界、悬空和 1–3 只猪限制。</p></article>
+        <article><b>03</b><h3>五局三胜</h3><p>猪全部被消灭，鸟方赢得回合；小鸟用尽，猪方取胜。先赢 3 回合赢得比赛，双方准备后进入下一回合。</p></article>
+        <article><b>04</b><h3>材料克制</h3><p>木材均衡，石材耐撞但昂贵，玻璃便宜且脆。黑曜爆破适合密集堡垒，霜蓝分裂适合打击多处薄弱点。</p></article>
+      </div>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+  <script src="/game.js" defer></script>
+</body>
+</html>
